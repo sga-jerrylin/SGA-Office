@@ -1,0 +1,11 @@
+flask
+python-docx
+requests
+mistune==3.0.2
+
+openpyxl
+flask_sqlalchemy
+
+apscheduler
+cos-python-sdk-v5
+gunicorn==20.1.0

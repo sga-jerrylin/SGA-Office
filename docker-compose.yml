@@ -1,0 +1,15 @@
+services:
+  cow:
+    image:  registry.cn-hangzhou.aliyuncs.com/myzaizhe/wj_studio:1.0.0
+    environment:
+      TZ: 'Asia/Shanghai'
+    ports:
+      - "5101:5001"
+    volumes:
+      - ./instance:/app/instance
+    deploy:
+      replicas: 1
+      update_config:
+        parallelism: 1 
+        delay: 10s
+        order: start-first
