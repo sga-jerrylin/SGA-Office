@@ -1,6 +1,9 @@
 services:
   cow:
-    image:  registry.cn-hangzhou.aliyuncs.com/myzaizhe/wj_studio:1.0.0
+    build: .
+    image: sga-office:latest
+    env_file:
+      - .env
     environment:
       TZ: 'Asia/Shanghai'
     ports:
@@ -10,6 +13,6 @@ services:
     deploy:
       replicas: 1
       update_config:
-        parallelism: 1 
+        parallelism: 1
         delay: 10s
         order: start-first

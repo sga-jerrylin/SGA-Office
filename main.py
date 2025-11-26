@@ -18,14 +18,11 @@ import requests
 
 app = Flask(__name__)
 
-# 腾讯云COS配置
-SECRET_ID = os.getenv('COS_SECRET_ID')
-SECRET_KEY = os.getenv('COS_SECRET_KEY')
-REGION = os.getenv('COS_REGION', 'ap-guangzhou')
-BUCKET_NAME = os.getenv('COS_BUCKET_NAME', 'difyfordoc-1323080521')
-
-if not all([SECRET_ID, SECRET_KEY]):
-    print("Warning: COS credentials not found in environment variables.")
+# 腾讯云COS配置（从环境变量读取）
+SECRET_ID = os.environ.get('COS_SECRET_ID', '')
+SECRET_KEY = os.environ.get('COS_SECRET_KEY', '')
+REGION = os.environ.get('COS_REGION', 'ap-guangzhou')
+BUCKET_NAME = os.environ.get('COS_BUCKET_NAME', '')
 
 config = CosConfig(Region=REGION, SecretId=SECRET_ID, SecretKey=SECRET_KEY)
 cos_client = CosS3Client(config)
@@ -113,35 +110,57 @@ class MarkdownToDocx:
         if 'children' in node:
              for child in node['children']:
                  if child['type'] == 'paragraph':
-                     self.render_inline(p, child['children'])
+                     self.render_inline(p, child.get('children', []))
+                 elif child['type'] == 'block_text':
+                     # mistune 3.x 使用 block_text 而不是 paragraph
+                     self.render_inline(p, child.get('children', []))
                  elif child['type'] == 'block_code':
                      run = p.add_run('\n' + child.get('raw', ''))
                      run.font.name = 'Courier New'
+                 elif child['type'] == 'list':
+                     # 处理嵌套列表
+                     self.visit_list(child)
                  else:
-                     pass
+                     # 尝试处理其他包含 children 的节点
+                     if 'children' in child:
+                         self.render_inline(p, child.get('children', []))
 
     def visit_table(self, node):
         children = node.get('children', [])
         thead = next((c for c in children if c['type'] == 'table_head'), None)
         tbody = next((c for c in children if c['type'] == 'table_body'), None)
-        
-        rows = []
+
+        # 构建统一的行结构
+        # thead 的 children 直接是 table_cell 列表
+        # tbody 的 children 是 table_row 列表，每个 table_row 包含 table_cell
+        all_rows = []  # 每个元素是 cell 列表
+
         if thead:
-            rows.extend(thead.get('children', []))
+            # thead.children 直接是 table_cell 列表
+            header_cells = thead.get('children', [])
+            if header_cells and header_cells[0].get('type') == 'table_cell':
+                all_rows.append(header_cells)
+            else:
+                # 兼容旧格式：thead.children 是 table_row 列表
+                for row in header_cells:
+                    all_rows.append(row.get('children', []))
+
         if tbody:
-            rows.extend(tbody.get('children', []))
-            
-        if not rows:
+            # tbody.children 是 table_row 列表
+            for row in tbody.get('children', []):
+                all_rows.append(row.get('children', []))
+
+        if not all_rows:
             return
 
         # Calculate max columns to ensure all data fits
-        col_count = max(len(r.get('children', [])) for r in rows)
-        self.table = self.doc.add_table(rows=len(rows), cols=col_count)
+        col_count = max(len(cells) for cells in all_rows)
+        self.table = self.doc.add_table(rows=len(all_rows), cols=col_count)
         self.table.style = "Table Grid"
-        
-        for i, row_node in enumerate(rows):
+
+        for i, cells in enumerate(all_rows):
             self.row = self.table.rows[i]
-            for j, cell_node in enumerate(row_node.get('children', [])):
+            for j, cell_node in enumerate(cells):
                 self.cell = self.row.cells[j]
                 self.cell._element.clear_content()
                 p = self.cell.add_paragraph()
@@ -153,18 +172,154 @@ class MarkdownToDocx:
     def visit_image(self, node):
         url = node.get('attrs', {}).get('url', '')
         if not url:
+            print(f"[DEBUG] Image URL is empty")
             return
+
+        print(f"[DEBUG] Downloading image: {url}")
+
         try:
-            response = requests.get(url, timeout=10)
-            if response.status_code == 200:
-                image_stream = BytesIO(response.content)
-                p = self.doc.add_paragraph()
-                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                run = p.add_run()
-                run.add_picture(image_stream, width=Cm(15)) 
+            # 下载图片
+            response = requests.get(url, timeout=30, headers={
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            })
+
+            if response.status_code != 200:
+                print(f"[DEBUG] Image download failed with status: {response.status_code}")
+                self.doc.add_paragraph(f"[图片下载失败: HTTP {response.status_code}]")
+                return
+
+            image_data = response.content
+            print(f"[DEBUG] Image downloaded, size: {len(image_data)} bytes")
+
+            # 验证并处理图片
+            from PIL import Image
+            image_stream = BytesIO(image_data)
+            try:
+                img = Image.open(image_stream)
+                img_width, img_height = img.size
+                img_format = img.format
+                img_mode = img.mode
+                print(f"[DEBUG] Image info: {img_width}x{img_height}, format: {img_format}, mode: {img_mode}")
+
+                # 关键修复：将 RGBA/P 等模式转换为 RGB，避免 Word 显示问题
+                if img_mode in ('RGBA', 'P', 'LA'):
+                    print(f"[DEBUG] Converting {img_mode} to RGB")
+                    # 创建白色背景
+                    rgb_img = Image.new('RGB', img.size, (255, 255, 255))
+                    if img_mode == 'P':
+                        img = img.convert('RGBA')
+                    rgb_img.paste(img, mask=img.split()[-1] if img.mode == 'RGBA' else None)
+                    img = rgb_img
+                elif img_mode != 'RGB':
+                    print(f"[DEBUG] Converting {img_mode} to RGB")
+                    img = img.convert('RGB')
+
+                # 保存为 JPEG 格式（兼容性更好）
+                output_stream = BytesIO()
+                img.save(output_stream, format='JPEG', quality=95)
+                output_stream.seek(0)
+                print(f"[DEBUG] Image converted to JPEG, size: {len(output_stream.getvalue())} bytes")
+
+            except Exception as img_err:
+                print(f"[DEBUG] Invalid image format: {img_err}")
+                self.doc.add_paragraph(f"[图片格式无效: {url}]")
+                return
+
+            # 计算合适的宽度（固定使用 14cm，适合 A4 页面）
+            max_width_cm = 14
+            aspect_ratio = img_width / img_height if img_height > 0 else 1
+
+            # 简化逻辑：所有图片统一缩放到最大14cm宽
+            final_width_cm = max_width_cm
+
+            # 如果图片太高（高度会超过18cm），则按高度限制
+            expected_height_cm = max_width_cm / aspect_ratio
+            if expected_height_cm > 18:
+                final_width_cm = 18 * aspect_ratio
+
+            # 再缩小到 60%，效果更好
+            final_width_cm = final_width_cm * 0.6
+            final_width = Cm(final_width_cm)
+
+            print(f"[DEBUG] Final width: {final_width}")
+
+            # 创建新段落并添加图片
+            paragraph = self.doc.add_paragraph()
+            paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            paragraph.paragraph_format.space_before = Pt(12)
+            paragraph.paragraph_format.space_after = Pt(12)
+
+            run = paragraph.add_run()
+            inline_shape = run.add_picture(output_stream, width=final_width)
+
+            # 设置图片为"上下型环绕"布局
+            from docx.oxml.ns import nsmap, qn
+            from docx.oxml import OxmlElement
+
+            # 获取 inline 元素并转换为 anchor（浮动）
+            inline = inline_shape._inline
+
+            # 创建 anchor 元素替代 inline
+            anchor = OxmlElement('wp:anchor')
+            anchor.set(qn('wp:distT'), '0')
+            anchor.set(qn('wp:distB'), '0')
+            anchor.set(qn('wp:distL'), '114300')
+            anchor.set(qn('wp:distR'), '114300')
+            anchor.set(qn('wp:simplePos'), '0')
+            anchor.set(qn('wp:relativeHeight'), '0')
+            anchor.set(qn('wp:behindDoc'), '0')
+            anchor.set(qn('wp:locked'), '0')
+            anchor.set(qn('wp:layoutInCell'), '1')
+            anchor.set(qn('wp:allowOverlap'), '1')
+
+            # simplePos
+            simplePos = OxmlElement('wp:simplePos')
+            simplePos.set('x', '0')
+            simplePos.set('y', '0')
+            anchor.append(simplePos)
+
+            # positionH - 水平居中
+            positionH = OxmlElement('wp:positionH')
+            positionH.set('relativeFrom', 'column')
+            align = OxmlElement('wp:align')
+            align.text = 'center'
+            positionH.append(align)
+            anchor.append(positionH)
+
+            # positionV - 垂直相对于段落
+            positionV = OxmlElement('wp:positionV')
+            positionV.set('relativeFrom', 'paragraph')
+            posOffset = OxmlElement('wp:posOffset')
+            posOffset.text = '0'
+            positionV.append(posOffset)
+            anchor.append(positionV)
+
+            # 复制 inline 的子元素
+            for child in inline:
+                anchor.append(child)
+
+            # 添加 wrapTopAndBottom（上下型环绕）
+            wrapTopAndBottom = OxmlElement('wp:wrapTopAndBottom')
+            anchor.append(wrapTopAndBottom)
+
+            # 替换 inline 为 anchor
+            drawing = inline.getparent()
+            drawing.remove(inline)
+            drawing.append(anchor)
+
+            print(f"[DEBUG] Image added with Top-Bottom wrap layout")
+
+        except requests.exceptions.Timeout:
+            print(f"[DEBUG] Image download timeout: {url}")
+            self.doc.add_paragraph(f"[图片下载超时: {url}]")
+        except requests.exceptions.RequestException as e:
+            print(f"[DEBUG] Image download error: {e}")
+            self.doc.add_paragraph(f"[图片下载失败: {url}]")
         except Exception as e:
-            print(f"Failed to download image: {e}")
-            p = self.doc.add_paragraph(f"[图片下载失败: {url}]")
+            print(f"[DEBUG] Unexpected error adding image: {e}")
+            import traceback
+            traceback.print_exc()
+            self.doc.add_paragraph(f"[图片处理失败: {str(e)}]")
 
     def render_inline(self, paragraph, nodes):
         for node in nodes:
@@ -201,13 +356,31 @@ def home():
 @app.route('/generate-doc', methods=['POST'])
 def generate_doc():
     data = request.json
+
+    # 调试日志：打印收到的原始数据
+    print(f"[DEBUG] Received data: {data}")
+    print(f"[DEBUG] Data type: {type(data)}")
+
     if not data:
         return jsonify({'error': '没有提供数据'}), 400
-    
-    filename_input = data.get("filename", "默认文档").strip()
-    content = data.get("content", "")
-    
-    if not content:
+
+    # 确保 filename 和 content 是字符串类型
+    filename_input = str(data.get("filename", "默认文档")).strip()
+    content = str(data.get("content", ""))
+
+    print(f"[DEBUG] filename_input: {filename_input}")
+    print(f"[DEBUG] content (first 100 chars): {content[:100] if content else 'EMPTY'}")
+
+    # 处理可能的转义字符和特殊前缀
+    # 有些系统可能会对 # 开头的内容进行转义
+    if content.startswith('\\#'):
+        content = content[1:]  # 去掉转义符
+
+    # 处理 \n 字面量转换为真正的换行符
+    content = content.replace('\\n', '\n')
+
+    if not content or content.strip() == '' or content == 'None':
+         print(f"[DEBUG] Content is empty or None!")
          return jsonify({'error': '内容不能为空'}), 400
 
     try:

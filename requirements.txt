@@ -2,6 +2,7 @@ flask
 python-docx
 requests
 mistune==3.0.2
+Pillow
 
 openpyxl
 flask_sqlalchemy
