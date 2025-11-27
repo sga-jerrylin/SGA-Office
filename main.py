@@ -126,9 +126,12 @@ class MarkdownToDocx:
                          self.render_inline(p, child.get('children', []))
 
     def visit_table(self, node):
+        print(f"[DEBUG] visit_table called")
         children = node.get('children', [])
         thead = next((c for c in children if c['type'] == 'table_head'), None)
         tbody = next((c for c in children if c['type'] == 'table_body'), None)
+
+        print(f"[DEBUG] thead found: {thead is not None}, tbody found: {tbody is not None}")
 
         # 构建统一的行结构
         # thead 的 children 直接是 table_cell 列表
@@ -138,6 +141,7 @@ class MarkdownToDocx:
         if thead:
             # thead.children 直接是 table_cell 列表
             header_cells = thead.get('children', [])
+            print(f"[DEBUG] thead children count: {len(header_cells)}")
             if header_cells and header_cells[0].get('type') == 'table_cell':
                 all_rows.append(header_cells)
             else:
@@ -147,14 +151,20 @@ class MarkdownToDocx:
 
         if tbody:
             # tbody.children 是 table_row 列表
-            for row in tbody.get('children', []):
+            tbody_children = tbody.get('children', [])
+            print(f"[DEBUG] tbody children count: {len(tbody_children)}")
+            for row in tbody_children:
                 all_rows.append(row.get('children', []))
 
+        print(f"[DEBUG] all_rows count: {len(all_rows)}")
+
         if not all_rows:
+            print(f"[DEBUG] No rows found, returning")
             return
 
         # Calculate max columns to ensure all data fits
         col_count = max(len(cells) for cells in all_rows)
+        print(f"[DEBUG] Creating table with {len(all_rows)} rows and {col_count} cols")
         self.table = self.doc.add_table(rows=len(all_rows), cols=col_count)
         self.table.style = "Table Grid"
 
@@ -168,6 +178,8 @@ class MarkdownToDocx:
                 p.alignment = WD_ALIGN_PARAGRAPH.CENTER
                 for run in p.runs:
                     self.set_font(run)
+
+        print(f"[DEBUG] Table created successfully")
 
     def visit_image(self, node):
         url = node.get('attrs', {}).get('url', '')
