@@ -377,7 +377,8 @@ def generate_doc():
         return jsonify({'error': '没有提供数据'}), 400
 
     # 确保 filename 和 content 是字符串类型
-    filename_input = str(data.get("filename", "默认文档")).strip()
+    # 兼容 title 和 filename 两种字段名
+    filename_input = str(data.get("filename") or data.get("title") or "默认文档").strip()
     content = str(data.get("content", ""))
 
     print(f"[DEBUG] filename_input: {filename_input}")
