@@ -359,6 +359,74 @@ class MarkdownToDocx:
             return "".join([self.get_text(child) for child in node['children']])
         return ""
 
+
+def convert_tab_tables_to_markdown(content: str) -> str:
+    """将 Tab 分隔的表格转换为 Markdown 表格格式"""
+    lines = content.split('\n')
+    result = []
+    i = 0
+
+    while i < len(lines):
+        line = lines[i]
+        # 检测是否是 Tab 分隔的表格行（至少有2个 Tab）
+        if '\t' in line and line.count('\t') >= 1:
+            # 收集连续的 Tab 分隔行
+            table_lines = []
+            while i < len(lines) and '\t' in lines[i]:
+                table_lines.append(lines[i])
+                i += 1
+
+            # 如果只有一行，可能不是表格
+            if len(table_lines) >= 2:
+                # 转换为 Markdown 表格
+                for j, tline in enumerate(table_lines):
+                    cells = tline.split('\t')
+                    md_row = '| ' + ' | '.join(cells) + ' |'
+                    result.append(md_row)
+                    # 在表头后添加分隔符行
+                    if j == 0:
+                        separator = '| ' + ' | '.join(['---'] * len(cells)) + ' |'
+                        result.append(separator)
+            else:
+                # 只有一行，保持原样
+                result.extend(table_lines)
+        else:
+            result.append(line)
+            i += 1
+
+    return '\n'.join(result)
+
+def repair_markdown_table(content: str) -> str:
+    """修复 Markdown 表格格式，确保每一行都以 | 开头和结尾"""
+    lines = content.split('\n')
+    new_lines = []
+    
+    # 简单的启发式：检查是否有分隔行 (e.g. |---|---|)
+    has_separator = False
+    for line in lines:
+        if re.match(r'^\s*\|?[\s:-]{3,}\|[\s:-]{3,}\|?.*$', line):
+            has_separator = True
+            break
+            
+    if not has_separator:
+        return content
+
+    for line in lines:
+        stripped = line.strip()
+        # 如果行包含 | 且不是分隔行（虽然分隔行也会被处理，但这没关系）
+        # 我们假设在有分隔行的情况下，包含 | 的行都是表格的一部分
+        if '|' in stripped and len(stripped) > 1:
+             if not stripped.startswith('|'):
+                 stripped = '| ' + stripped
+             if not stripped.endswith('|'):
+                 stripped = stripped + ' |'
+             new_lines.append(stripped)
+        else:
+            new_lines.append(line)
+            
+    return '\n'.join(new_lines)
+
+
 #         Docx 生成接口
 ####################################
 @app.route('/')
@@ -376,10 +444,15 @@ def generate_doc():
     if not data:
         return jsonify({'error': '没有提供数据'}), 400
 
+    # 兼容 Dify 的 doc 包裹格式
+    if "doc" in data and isinstance(data["doc"], dict):
+        data = data["doc"]
+
     # 确保 filename 和 content 是字符串类型
     # 兼容 title 和 filename 两种字段名
     filename_input = str(data.get("filename") or data.get("title") or "默认文档").strip()
-    content = str(data.get("content", ""))
+    # 兼容 Content（大写）和 content（小写）两种字段名
+    content = str(data.get("content") or data.get("Content") or "")
 
     print(f"[DEBUG] filename_input: {filename_input}")
     print(f"[DEBUG] content (first 100 chars): {content[:100] if content else 'EMPTY'}")
@@ -391,6 +464,12 @@ def generate_doc():
 
     # 处理 \n 字面量转换为真正的换行符
     content = content.replace('\\n', '\n')
+
+    # 处理 Tab 分隔的表格，转换为 Markdown 表格
+    content = convert_tab_tables_to_markdown(content)
+    
+    # 修复 Markdown 表格格式
+    content = repair_markdown_table(content)
 
     if not content or content.strip() == '' or content == 'None':
          print(f"[DEBUG] Content is empty or None!")
@@ -567,6 +646,12 @@ def generate_excel_route():
 
         if not content:
              return jsonify({'error': '内容不能为空'}), 400
+
+        # Preprocessing similar to generate_doc
+        if content.startswith('\\#'):
+            content = content[1:]
+        content = content.replace('\\n', '\n')
+        content = repair_markdown_table(content)
 
         # Parse Markdown to find table
         markdown = mistune.create_markdown(renderer=None, plugins=['table'])
