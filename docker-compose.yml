@@ -1,5 +1,6 @@
 services:
-  cow:
+  # ========== API 服务 (FastAPI + LibreOffice) ==========
+  api:
     build: .
     image: sga-office:latest
     env_file:
@@ -7,12 +8,11 @@ services:
     environment:
       TZ: 'Asia/Shanghai'
     ports:
-      - "5101:5001"
-    volumes:
-      - ./instance:/app/instance
+      - "5101:8000"
     deploy:
       replicas: 1
       update_config:
         parallelism: 1
         delay: 10s
         order: start-first
+    restart: unless-stopped

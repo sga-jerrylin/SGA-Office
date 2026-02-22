@@ -6,3 +6,5 @@ venv/
 .vscode/
 temp_*.docx
 temp_*.xlsx
+.pytest_cache/
+instance/

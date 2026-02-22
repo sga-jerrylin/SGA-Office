@@ -1,12 +1,28 @@
-flask
-python-docx
-requests
+# ========== API 框架 ==========
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+
+# ========== 文档处理 ==========
+python-docx>=1.1.0
 mistune==3.0.2
-Pillow
+Pillow>=10.0.0
+openpyxl>=3.1.0
 
-openpyxl
-flask_sqlalchemy
+# ========== PDF 处理 ==========
+pymupdf>=1.24.0
 
-apscheduler
+# ========== 可视化素材 (VIS) ==========
+matplotlib>=3.8.0
+qrcode[pil]>=7.4.0
+python-barcode>=0.15.0
+wordcloud>=1.9.0
+jieba>=0.42.0
+
+# ========== 云存储 & 网络 ==========
 cos-python-sdk-v5
-gunicorn==20.1.0
+requests>=2.31.0
+
+# ========== 生产部署 ==========
+gunicorn>=21.2.0

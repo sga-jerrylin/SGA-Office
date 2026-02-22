@@ -1,16 +1,25 @@
-# 使用 Python 3 官方镜像作为基础镜像
+# ========== SGA-Office API 镜像 ==========
 FROM python:3.10-slim
 
-# 设置工作目录
 WORKDIR /app
 
-ADD ./ /app/
+# 安装系统依赖：LibreOffice (PDF-01) + CJK 字体 (VIS 中文支持)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libreoffice-writer \
+    fonts-noto-cjk \
+    fonts-wqy-microhei \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
 
-# 安装依赖
-RUN pip install -r requirements.txt
+# 复制依赖清单并安装 Python 包
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-# 暴露 5001 端口，Gunicorn 默认监听该端口
-EXPOSE 5001
+# 复制源代码
+COPY . .
 
-# 定义容器启动时执行的命令，使用 Gunicorn 启动 Flask 应用
-CMD ["gunicorn", "--timeout", "120","-w", "4", "-b", "0.0.0.0:5001", "main:app"]
+# 暴露 API 端口
+EXPOSE 8000
+
+# 使用 uvicorn 启动 FastAPI (生产模式)
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]
