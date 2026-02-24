@@ -7,6 +7,35 @@ from typing import Optional, Any, Union
 from pydantic import BaseModel, Field, HttpUrl, field_validator
 
 
+# ========== Excel Style Engine Schema ==========
+
+class GanttConfig(BaseModel):
+    """甘特图时间线配置"""
+    date_columns: list[str] = Field(..., min_length=2, max_length=2, description="开始/结束日期所在列字母，如 ['D', 'E']")
+    timeline_start: str = Field(..., description="时间轴起始日期，如 '2026-03-01'")
+    timeline_end: str = Field(..., description="时间轴结束日期，如 '2026-06-30'")
+    granularity: str = Field(default="week", description="时间粒度: day / week / month")
+    bar_color_column: Optional[str] = Field(default=None, description="条形颜色跟随哪列的分组色")
+
+
+class RowGroupConfig(BaseModel):
+    """行分组着色配置"""
+    group_column: str = Field(..., description="分组依据列字母，如 'B'")
+    colors: Optional[dict[str, str]] = Field(default=None, description="分组值->HEX颜色映射，不指定则自动分配")
+
+
+class ExcelStyle(BaseModel):
+    """Excel 增强样式配置（全部可选）"""
+    theme: Optional[str] = Field(default=None, description="主题色系: business_blue / government_red / tech_dark / academic_green / minimal")
+    header_style: str = Field(default="colored", description="表头样式: colored / minimal / bold_only")
+    freeze_panes: Optional[str] = Field(default=None, description="冻结窗格位置，如 'A3'")
+    auto_filter: bool = Field(default=False, description="表头自动筛选")
+    alternating_rows: bool = Field(default=True, description="交替行背景色")
+    column_widths: Optional[dict[str, int]] = Field(default=None, description="手动列宽，如 {'A': 8, 'B': 30}")
+    row_groups: Optional[RowGroupConfig] = Field(default=None, description="按列值分组着色")
+    gantt: Optional[GanttConfig] = Field(default=None, description="甘特图时间线（可选）")
+
+
 # ========== EXC-01: 简单二维归档入库 (2D Array → Excel) ==========
 
 class CreateExcelRequest(BaseModel):
@@ -36,6 +65,10 @@ class CreateExcelRequest(BaseModel):
         default="未命名表格",
         max_length=100,
         description="生成的文件名（不含扩展名）。"
+    )
+    style: Optional[ExcelStyle] = Field(
+        default=None,
+        description="增强样式配置。不传则使用默认样式（向后兼容）。"
     )
 
     @field_validator("data")
@@ -146,6 +179,10 @@ class SheetDefinition(BaseModel):
         default=None,
         description="需要合并的单元格区间列表。格式: ['A1:D1', 'E5:E8']"
     )
+    style: Optional[ExcelStyle] = Field(
+        default=None,
+        description="该 Sheet 的样式配置（可选，覆盖请求级别的 style）。"
+    )
 
 
 class GenerateComplexExcelRequest(BaseModel):
@@ -168,6 +205,10 @@ class GenerateComplexExcelRequest(BaseModel):
         default=None,
         max_length=100,
         description="生成文件名（不含扩展名）"
+    )
+    style: Optional[ExcelStyle] = Field(
+        default=None,
+        description="全局样式配置。各 Sheet 可在 SheetDefinition.style 中单独覆盖。"
     )
 
     model_config = {

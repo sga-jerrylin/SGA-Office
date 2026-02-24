@@ -46,6 +46,7 @@ async def exc01_create_excel(req: CreateExcelRequest):
             title=req.title,
             data=req.data,
             sheet_name=req.sheet_name or "Sheet1",
+            style=req.style.model_dump() if req.style else None,
         )
 
         # 2. 上传到 COS
@@ -132,6 +133,7 @@ async def exc03_generate_complex(req: GenerateComplexExcelRequest):
         excel_bytes = generate_complex_excel(
             title=req.title,
             sheets_def=sheets_data,
+            style=req.style.model_dump() if req.style else None,
         )
 
         # 3. 上传
