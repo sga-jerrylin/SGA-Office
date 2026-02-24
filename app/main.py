@@ -8,8 +8,11 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+
+from app.core.error_hints import build_agent_hint, ErrorType
 
 from app.core.config import get_settings
 from app.api.endpoints import excel_routes, doc_routes, vis_routes, pdf_routes, legacy_routes
@@ -65,6 +68,32 @@ app.add_middleware(
 
 
 # ---------- 全局异常处理 ----------
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    """Pydantic 校验失败时返回 agent_hint"""
+    errors = exc.errors()
+    first_error = errors[0] if errors else {}
+    field_loc = " -> ".join(str(l) for l in first_error.get("loc", []))
+    msg = first_error.get("msg", "校验失败")
+
+    hint = build_agent_hint(
+        error_type=ErrorType.MISSING_FIELD if "required" in msg.lower() or "missing" in msg.lower()
+                   else ErrorType.TYPE_ERROR if "type" in msg.lower()
+                   else ErrorType.INVALID_VALUE,
+        field=field_loc,
+        message=msg,
+    )
+
+    return JSONResponse(
+        status_code=422,
+        content={
+            "code": 422,
+            "message": f"入参校验失败: {msg} (字段: {field_loc})",
+            "agent_hint": hint,
+        },
+    )
+
+
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     logger.exception(f"未捕获异常: {request.method} {request.url}")
