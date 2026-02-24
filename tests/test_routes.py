@@ -155,3 +155,56 @@ class TestVisRoutes:
         assert resp.status_code == 200
         assert resp.json()["code"] == 200
 
+
+# =====================================================
+#  增强 DOC 端点（frontmatter 驱动）
+# =====================================================
+
+class TestEnhancedDocRoutes:
+
+    def test_doc01_with_frontmatter(self, client):
+        """DOC-01 with frontmatter should work"""
+        md = '---\ncover:\n  title: "Test Cover"\ntheme: business_blue\n---\n# Hello\n\nWorld'
+        resp = client.post("/api/v1/docx/render_markdown", json={
+            "markdown_content": md,
+            "filename": "test_rich",
+        })
+        assert resp.status_code == 200
+        assert resp.json()["code"] == 200
+
+    def test_doc01_without_frontmatter_still_works(self, client):
+        """DOC-01 without frontmatter should be identical to before"""
+        resp = client.post("/api/v1/docx/render_markdown", json={
+            "markdown_content": "# Simple\n\nPlain markdown.",
+        })
+        assert resp.status_code == 200
+
+    def test_doc01_invalid_frontmatter_returns_hint(self, client):
+        """Invalid frontmatter cover without title should return agent_hint"""
+        md = '---\ncover:\n  subtitle: "missing title"\n---\n# Content'
+        resp = client.post("/api/v1/docx/render_markdown", json={
+            "markdown_content": md,
+        })
+        assert resp.status_code in (422, 500)
+
+
+# =====================================================
+#  增强 Excel 端点（style engine）
+# =====================================================
+
+class TestEnhancedExcelRoutes:
+
+    def test_exc01_with_style(self, client):
+        resp = client.post("/api/v1/excel/create_from_array", json={
+            "title": "Styled Sheet",
+            "data": [["Name", "Score"], ["Alice", 95]],
+            "style": {"theme": "business_blue", "freeze_panes": "A3"},
+        })
+        assert resp.status_code == 200
+
+    def test_exc01_without_style_still_works(self, client):
+        resp = client.post("/api/v1/excel/create_from_array", json={
+            "title": "Basic",
+            "data": [["A", "B"], [1, 2]],
+        })
+        assert resp.status_code == 200
