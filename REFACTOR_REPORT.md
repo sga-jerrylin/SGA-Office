@@ -764,5 +764,236 @@ open http://localhost:8000/docs
 
 ---
 
+## 八、富文档渲染增强（v2）
+
+> **提交范围**: Tasks 1-7
+> **核心目标**: 在保持完全向后兼容的前提下，为 DOC-01 和 EXC-01/03 引入主题色系、frontmatter 驱动的富布局、Excel 样式引擎和 Agent 友好报错机制。
+
+---
+
+### 8.1 Frontmatter 规范
+
+DOC-01 (`/api/v1/docx/render_markdown`) 现在支持在 Markdown 正文前通过 YAML frontmatter 控制文档布局。无 frontmatter 时行为与原版完全一致。
+
+**完整示例**:
+
+````markdown
+---
+cover:
+  title: "2026年度工作报告"
+  subtitle: "技术部"
+  meta:
+    - "作者：张三"
+    - "日期：2026-02-25"
+header: "机密文档 — 内部使用"
+footer: page_number
+toc: true
+theme: business_blue
+---
+# 第一章 概述
+
+正文内容...
+
+> [!INFO] 重要提示
+> 这是一条信息高亮框
+
+> [!WARNING] 注意
+> 这是警告框
+
+---
+
+# 第二章 详细分析
+
+更多内容（上方 `---` 会渲染为分页符）
+
+| 指标 | Q1 | Q2 |
+|------|-----|-----|
+| 收入 | 100 | 200 |
+````
+
+**Frontmatter 字段表**:
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `cover` | object | 否 | 封面页配置 |
+| `cover.title` | string | 当 cover 存在时必填 | 封面主标题 |
+| `cover.subtitle` | string | 否 | 封面副标题 |
+| `cover.meta` | string[] | 否 | 封面元信息行（作者、日期等） |
+| `header` | string | 否 | 页眉文字（居中显示） |
+| `footer` | string | 否 | 页脚类型：`page_number` / `custom_text` / `both` |
+| `footer_text` | string | 否 | 当 footer 为 `custom_text` 或 `both` 时的自定义文字 |
+| `toc` | boolean | 否 | 是否插入目录页（Word 打开时自动刷新） |
+| `theme` | string | 否 | 主题色系名称（见下方主题列表），默认 `business_blue` |
+
+---
+
+### 8.2 增强 Markdown 语法
+
+在正文部分，支持以下增强语法：
+
+| 语法 | 渲染效果 |
+|---|---|
+| `> [!INFO] 标题` + 后续引用行 | 蓝色信息高亮框 |
+| `> [!NOTE] 标题` + 后续引用行 | 绿色备注高亮框 |
+| `> [!WARNING] 标题` + 后续引用行 | 黄色警告高亮框 |
+| 正文中的 `---`（水平分割线） | 分页符（Page Break） |
+
+高亮框使用带底色的单格表格实现（python-docx 标准着色技巧），颜色跟随当前主题。
+
+---
+
+### 8.3 主题列表
+
+Docx 和 Excel 共用同一套主题色系（`app/core/themes.py`），保持视觉一致性。
+
+| 主题名称 | 标题色 | 表头背景 | 适用场景 |
+|---|---|---|---|
+| `business_blue` | #2E75B6 | #2E75B6 | 企业商务报告（默认） |
+| `government_red` | #C00000 | #C00000 | 政府/党建公文 |
+| `tech_dark` | #404040 | #505050 | 科技/深色风格 |
+| `academic_green` | #548235 | #548235 | 学术/教育论文 |
+| `minimal` | #333333 | #F2F2F2 | 极简/打印友好 |
+
+未知主题名称自动回退到 `business_blue`。
+
+---
+
+### 8.4 Excel 样式引擎
+
+EXC-01 (`/api/v1/excel/create_from_array`) 和 EXC-03 (`/api/v1/excel/generate_complex`) 现在支持可选的 `style` 字段。
+
+**请求示例**:
+
+```json
+{
+  "title": "项目进度表",
+  "data": [
+    ["任务", "开始日期", "结束日期", "状态"],
+    ["需求分析", "2026-03-01", "2026-03-15", "完成"],
+    ["开发", "2026-03-10", "2026-03-25", "进行中"]
+  ],
+  "style": {
+    "theme": "business_blue",
+    "header_style": "colored",
+    "freeze_panes": "A3",
+    "auto_filter": true,
+    "alternating_rows": true,
+    "column_widths": {"A": 20, "B": 15, "C": 15, "D": 12},
+    "row_groups": {
+      "group_column": "D",
+      "colors": {"完成": "70AD47", "进行中": "2E75B6"}
+    },
+    "gantt": {
+      "date_columns": ["B", "C"],
+      "timeline_start": "2026-03-01",
+      "timeline_end": "2026-03-31",
+      "granularity": "week"
+    }
+  }
+}
+```
+
+**Excel Style 字段表**:
+
+| 字段 | 类型 | 默认值 | 说明 |
+|---|---|---|---|
+| `theme` | string | null | 主题色系（同上方主题列表） |
+| `header_style` | string | `"colored"` | 表头样式：`colored` / `minimal` / `bold_only` |
+| `freeze_panes` | string | null | 冻结窗格位置，如 `"A3"` |
+| `auto_filter` | boolean | false | 表头自动筛选 |
+| `alternating_rows` | boolean | true | 交替行背景色（需配合 theme） |
+| `column_widths` | object | null | 手动列宽，如 `{"A": 8, "B": 30}` |
+| `row_groups` | object | null | 按列值分组着色（见下表） |
+| `gantt` | object | null | 甘特图时间线（见下表） |
+
+**RowGroupConfig 字段**:
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `group_column` | string | 是 | 分组依据列字母，如 `"A"` |
+| `colors` | object | 否 | 分组值到 HEX 颜色的映射，如 `{"Alpha": "2E75B6"}`。不指定则自动分配 |
+
+**GanttConfig 字段**:
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `date_columns` | string[2] | 是 | 开始/结束日期所在列字母，如 `["B", "C"]` |
+| `timeline_start` | string | 是 | 时间轴起始日期，如 `"2026-03-01"` |
+| `timeline_end` | string | 是 | 时间轴结束日期，如 `"2026-03-31"` |
+| `granularity` | string | 否 | 时间粒度：`day` / `week`（默认）/ `month` |
+| `bar_color_column` | string | 否 | 条形颜色跟随哪列的 row_groups 分组色 |
+
+---
+
+### 8.5 Agent 错误提示格式
+
+当入参校验失败或 frontmatter 配置错误时，响应体包含 `agent_hint` 字段，Agent 可据此自动修正入参。
+
+**422 响应示例**:
+
+```json
+{
+  "code": 422,
+  "message": "入参校验失败: cover.title 是必填字段",
+  "agent_hint": {
+    "error_type": "missing_field",
+    "field": "cover.title",
+    "fix_suggestion": "请在请求中添加 cover.title 字段",
+    "correct_example": "---\ncover:\n  title: \"你的文档标题\"\n  subtitle: \"副标题（可选）\"\n  meta:\n    - \"作者：XXX\"\n---\n# 正文开始"
+  }
+}
+```
+
+**错误类型枚举**:
+
+| error_type | 触发场景 |
+|---|---|
+| `missing_field` | 缺少必填字段（如 cover 存在但无 title） |
+| `invalid_value` | 字段值不合法（如未知的 theme 名称） |
+| `invalid_frontmatter` | YAML frontmatter 解析失败 |
+| `type_error` | 字段类型不匹配 |
+| `empty_content` | Markdown 内容为空 |
+| `excel_style_error` | Excel style 配置错误 |
+
+---
+
+### 8.6 向后兼容性
+
+所有增强功能均为可选，不传新字段时行为与原版完全一致：
+
+- **DOC-01**: `markdown_content` 不含 frontmatter 时，走原有渲染路径，输出不变
+- **EXC-01/03**: 不传 `style` 字段时，使用默认样式，输出不变
+- **422 响应**: 原有 Pydantic 校验错误现在额外附带 `agent_hint`，不影响 `detail` 字段
+
+**测试验证**: 全量 94 个测试用例通过（原有 54 + 新增 40），包含专门的向后兼容测试类。
+
+---
+
+### 8.7 新增文件清单
+
+| 文件 | 说明 |
+|---|---|
+| `app/core/themes.py` | 5 套主题色系定义 + `get_theme()` 查询函数 |
+| `app/core/error_hints.py` | Agent 友好报错机制 + `build_agent_hint()` 构建函数 |
+| `tests/test_themes.py` | 主题系统单元测试（4 个） |
+| `tests/test_error_hints.py` | 错误提示单元测试 + 集成测试（5 个） |
+| `tests/test_frontmatter.py` | Frontmatter 解析 + 富文档渲染测试（11 个） |
+| `tests/test_excel_style.py` | Excel 样式引擎 + 甘特图测试（11 个） |
+
+**修改的文件**:
+
+| 文件 | 修改内容 |
+|---|---|
+| `requirements.txt` | 新增 `pyyaml>=6.0` |
+| `app/services/doc_builder.py` | 新增 frontmatter 解析、封面、页眉页脚、目录、高亮框、主题色支持 |
+| `app/services/excel_handler.py` | 新增 style engine、gantt timeline、row groups |
+| `app/schemas/payload_excel.py` | 新增 `ExcelStyle` / `GanttConfig` / `RowGroupConfig` schema |
+| `app/schemas/base.py` | 新增 `AgentErrorResponse` schema |
+| `app/main.py` | 新增 `RequestValidationError` 异常处理器 |
+| `app/api/endpoints/excel_routes.py` | 传递 `style` 参数到 service 层 |
+| `tests/test_routes.py` | 新增增强端点集成测试（5 个） |
+
+---
+
 *报告由 Augment Agent 自动生成，反映 commit `b686fb4` 的代码状态。*
 
